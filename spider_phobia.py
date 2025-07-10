@@ -1,8 +1,10 @@
 import os
+import numpy as np
 from sklearn.cluster import KMeans
 import neurokit2 as nk
 import pandas as pd
 import matplotlib.pyplot as plt
+
 #defining functions that extract the data from each type of txt file into a data frame
 
 def load_deflection(path):
@@ -92,6 +94,20 @@ for patient_folder in patient_data:
         processed_data[patient_folder]['gsr']={"signals": gsr_signals, "info": gsr_info}
 
 
+# proposed clustering algorithm
 
+all_features=[]
+for patient_id, metrics in processed_data.items():
+    
+    X=metrics['breath']['signals']
+    all_features.append(X[['RSP_Rate','RSP_Amplitude']].to_numpy())
+all_features = np.vstack(all_features)     
+model = KMeans(n_clusters=2, random_state=42)
+labels = model.fit_predict(all_features)
 
+fig,axe=plt.subplots()
+axe.scatter(all_features[:,0], all_features[:,1], c=labels, cmap='tab10')
+axe.set_xlabel("RSP_Rate")
+axe.set_ylabel("RSP_Amplitude")
+axe.legend()
 
