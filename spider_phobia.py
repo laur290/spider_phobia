@@ -93,21 +93,113 @@ for patient_folder in patient_data:
                                              sampling_rate=100)
         processed_data[patient_folder]['gsr']={"signals": gsr_signals, "info": gsr_info}
 
+# sampling rate is 100 since that is the value of the recording frequency (in Hz) of the Bitalino devices 
 
-# proposed clustering algorithm
+# EXPORT TO CSV
 
-all_features=[]
-for patient_id, metrics in processed_data.items():
+for pid, metrics in processed_data.items():
+    # build a DataFrame with Time, BR, HR
+    df_b = metrics["breath"]["signals"][["RSP_Rate"]].rename(columns={"RSP_Rate":"BR"})
+    df_h = metrics["ecg"]["signals"][["ECG_Rate"]].rename(columns={"ECG_Rate":"HR"})
     
-    X=metrics['breath']['signals']
-    all_features.append(X[['RSP_Rate','RSP_Amplitude']].to_numpy())
-all_features = np.vstack(all_features)     
-model = KMeans(n_clusters=2, random_state=42)
-labels = model.fit_predict(all_features)
+    # assume index is sample number at 100 Hz
+    df_b["Time"] = df_b.index // 100
+    df_h["Time"] = df_h.index // 100
+    
+    # merge them into one DF
+    df = pd.merge(df_b, df_h, on="Time", how="outer")
 
-fig,axe=plt.subplots()
-axe.scatter(all_features[:,0], all_features[:,1], c=labels, cmap='tab10')
-axe.set_xlabel("RSP_Rate")
-axe.set_ylabel("RSP_Amplitude")
-axe.legend()
+    # aggregate per second
+    df_sec = df.groupby("Time")[["BR","HR"]].max().reset_index()
+    
+    # creates a destination
+    filename   = "BR_HR.csv"
+    # export to csv
+      
+    save_path = os.path.join(root_folder, pid, "BR_HR.csv")
 
+    # write the CSV, without the pandas index column
+    df_sec.to_csv(save_path, index=False)
+    
+# CREATE SEPARATE DATAFRAMES FOR EACH PATIENT'S BR AND HR OVER TIME + PLOT
+
+
+    
+patient_csv_data = {}
+for pid in os.listdir(root_folder):
+    csv_path = os.path.join(root_folder, pid, "BR_HR.csv")
+    if os.path.isfile(csv_path):
+        # read it once, store under that patient’s ID
+        patient_csv_data[pid] = pd.read_csv(csv_path)
+        
+# now patient_csv_data is a dict: { "VP01": DataFrame, "VP02": DataFrame, … }
+
+# define a plotting function I can call on demand
+
+def graph(patient_id):
+   
+    df = patient_csv_data.get(patient_id)
+    if df is None:
+        raise ValueError(f"No data for patient {patient_id}")
+    
+    fig, ax = plt.subplots()
+    ax.plot(df["Time"], df["BR"], color="red",  label="BR")
+    ax.plot(df["Time"], df["HR"], color="blue", label="HR")
+    
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Value")
+    ax.set_title(f"Breathing & Heart Rate for {patient_id}")
+    ax.grid(True)
+    ax.legend()
+    plt.show()
+    
+# EDA ANALYSIS 
+#(the data have already been extracted by load_conductance function, and processed with the neurokit2 function eda_process )
+
+# 1) exporting to csv
+for pid, metrics in processed_data.items():
+    gsr_signals = metrics['gsr']['signals'].copy()
+    gsr_signals['Time'] = gsr_signals.index // 100
+    df_eda_sec = gsr_signals.groupby('Time').agg({
+    'EDA_Clean': 'max',
+    'SCR_Peaks': 'sum'
+    }).rename(columns={'EDA_Clean':'Tonic','SCR_Peaks':'SCR_Count'}).reset_index()
+    save_path = os.path.join(root_folder, pid, "EDA.csv")
+    df_eda_sec.to_csv(save_path, index=False)
+ 
+        
+# 2) creating dictionary from the csv data
+patient_csv_data_2={}
+for pid in os.listdir(root_folder):
+    csv_path_2=os.path.join(root_folder, pid, "EDA.csv")
+    if os.path.isfile(csv_path_2):
+        patient_csv_data_2[pid]=pd.read_csv(csv_path_2)
+    
+# 3) defining plotting function for a. EDA signal and b. EDA stress_related feature
+def graph_eda(patient_id):
+    signals = processed_data[patient_id]['gsr']['signals']
+    fig, ax = plt.subplots()
+    ax.plot(signals.index / 100, signals['EDA_Clean'], color='green')
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("EDA_clean (μS)")
+    ax.set_title(f"Cleaned EDA for {patient_id}")
+    plt.show()
+
+def graph_eda_2(patient_id):
+    df = patient_csv_data_2.get(patient_id)
+    if df is None:
+        raise ValueError(f"No data for patient {patient_id}")
+    fig, ax1 = plt.subplots()
+    ax1.plot(df['Time'], df['Tonic'], color='green', label='Tonic EDA')
+    ax1.set_xlabel("Time [s]")
+    ax1.set_ylabel("Tonic Level", color='green')
+    ax1.legend(loc='upper left')
+
+    ax2 = ax1.twinx()
+    ax2.bar(df['Time'], df['SCR_Count'], width=1, alpha=0.4,
+            color='purple', label='SCR Count')
+    ax2.set_ylabel("SCR Count", color='purple')
+    ax2.legend(loc='upper right')
+
+    plt.title(f"EDA Summary for {patient_id}")
+    plt.show()
