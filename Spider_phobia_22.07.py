@@ -204,3 +204,67 @@ for pid, metrics in processed_data.items():
         row["ST_mean_s"] = np.nanmean(st_samps) #average ST interval duration for each patient
     interval_summary.append(row)
 df_interval_summary=pd.DataFrame(interval_summary).set_index('PID')
+
+
+
+# —————————————————————————————
+# 6) STRESS LEVEL CLASSIFICATION (only an initial draft, not final code)
+# —————————————————————————————
+from sklearn.linear_model import LinearRegression
+
+fs = 100  
+stress_rows = []
+
+for pid, metrics in processed_data.items():
+    
+    if pid not in df_interval_summary.index:
+        continue
+    interval = df_interval_summary.loc[pid]
+    mean_hr = interval['HR_mean_bpm']
+
+    
+    metrics = processed_data[pid]              
+    rpeaks = np.array(metrics['ecg']['info']['ECG_R_Peaks'])
+    rpeaks = rpeaks[~np.isnan(rpeaks)].astype(int)
+    rr_secs = np.diff(rpeaks) / fs
+    hrv_rmssd = np.sqrt(np.mean(np.diff(rr_secs) ** 2))
+
+  
+    eda = patient_csv_data_2.get(pid)
+    if eda is None or eda.empty:
+        continue
+    scr_count = eda['SCR_Count'].sum()
+
+   
+    model = LinearRegression()
+    lr = model.fit(eda[['Time']], eda['Tonic'])
+    scl_slope = lr.coef_[0]
+
+    stress_rows.append({
+        'PID':        pid,
+        'mean_HR':    mean_hr,
+        'HRV_RMSSD':  hrv_rmssd,
+        'SCR_count':  scr_count,
+        'SCL_slope':  scl_slope
+    })
+
+df_stress = pd.DataFrame(stress_rows).set_index('PID')
+
+def classify(r):
+   
+    hr   = float(r["mean_HR"])
+    hrv  = float(r["HRV_RMSSD"])
+    scl  = float(r["SCL_slope"])
+    scr  = float(r["SCR_count"])
+
+    
+    return "HIGH" if (
+        (hr  > 100 ) and
+        (hrv < 0.025) and
+        (scl > 1.1  ) and
+        (scr < 10   )
+    ) else "LOW"
+
+
+df_stress['STRESS_LEVEL'] = df_stress.apply(classify, axis=1)
+
