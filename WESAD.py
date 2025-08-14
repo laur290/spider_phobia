@@ -147,8 +147,14 @@ for pid, metrics in patient_data.items():
         window_hrv["window_start_time_[s]"] = window_hrv["window"] * window_size
         processed_data[pid]["HRV_per_1min"] = window_hrv
 
+# dropping unnecessary data (affects stress identification loop)
+for pid, metrics in processed_data.items():
+    for key in ["HR_mean_per_1min", "HRV_per_1min", "SCL_means_per_1min", "SCR_Counts_per_1min"]:
+        if key in metrics and not metrics[key].empty:
+            metrics[key]=metrics[key].iloc[25:].reset_index(drop=True)
 
     
+
 # ---------------------
 # 3) plotting functions
 # ---------------------
@@ -220,39 +226,83 @@ def plot_hr(pid):
 # ------------------------------------
 # 4) classification based on thresolds 
 # ------------------------------------
-'''
+
+
+
 THRESHOLDS={
-            "mean_HR": 82,
-            "RMSSD": 35 ,
-            "pNN50": 15,
-            "SCR": 5,
-            "SCL": 5
-            }
-        
+    "mean_HR": 82,
+    "RMSSD": 35 ,
+    "pNN50": 15,
+    "SCR": 3,
+}
+
 def count_violations(pid):
-    violations=0
+    violations = 0
+    win_hr=win_rmssd = win_pnn50 = win_scr = win_scl = None
     
-    for pid, metrics in processed_data.items():
-        df_c = metrics.get("HRV_per_1min")
-        
-        if df_c["HRV_per_1min"]['mean_HR']>THRESHOLDS['mean_HR']:
-            violations+=1
-        if df_c["HRV_per_1min"]['HRV_RMSSD']<THRESHOLDS['RMSSD']:
-            violations+=1
-        if df_c['HRV_pNN50']<THRESHOLDS['pNN50']:
-              violations+=1
-        if df_c['SCR_Counts_per_1min']>THRESHOLDS['SCR']:
-            violations+=1
-            ''''''
-        if processed_data['SCL_means_per_1min']>THRESHOLDS['SCL']:
-            violations+=1
-            '''''' # not taken into consideration until better thresholds are found
-            
-        return violations
-'''
-        
-        
-            
+    df_hrv=processed_data[pid].get("HRV_per_1min")
+    df_scl=processed_data[pid].get("SCL_means_per_1min")
+    df_scr=processed_data[pid].get("SCR_Counts_per_1min")
+    df_hr=processed_data[pid].get("HR_mean_per_1min")
+
+    if df_hr is not None and not df_hr.empty:
+        max_hr=pd.to_numeric(df_hr["mean_HR"], errors="coerce").max()
+        idx_hr=df_hr["mean_HR"].idxmax()
+        if pd.notna(idx_hr):
+            win_hr=df_hr.loc[idx_hr, "window_start_time_[s]"]
+        if pd.notna(max_hr) and max_hr>THRESHOLDS["mean_HR"]:
+            violations += 1
+
+    if df_hrv is not None and not df_hrv.empty:
+        rmssd_series=pd.to_numeric(df_hrv["HRV_RMSSD"], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+        if not rmssd_series.empty:
+            min_rmssd=rmssd_series.min()
+            idx_rmssd=rmssd_series.idxmin()
+            win_rmssd=df_hrv.loc[idx_rmssd, "window_start_time_[s]"]
+            if min_rmssd<THRESHOLDS["RMSSD"]:
+                violations += 1
+        else:
+            min_rmssd=np.nan
+
+        pnn_series=pd.to_numeric(df_hrv["HRV_pNN50"], errors="coerce").replace([np.inf, -np.inf], np.nan)
+        pnn_series=pnn_series[pnn_series > 0].dropna()
+        if not pnn_series.empty:
+            min_pnn50=pnn_series.min()
+            idx_pnn=pnn_series.idxmin()
+            win_pnn50=df_hrv.loc[idx_pnn, "window_start_time_[s]"]
+            if min_pnn50<THRESHOLDS["pNN50"]:
+                violations += 1
+        else:
+            min_pnn50=np.nan
+
+    if df_scr is not None and not df_scr.empty:
+        scr_series=pd.to_numeric(df_scr["SCR_Count"], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+        if not scr_series.empty:
+            max_scr=scr_series.max()
+            idx_scr=scr_series.idxmax()
+            win_scr=df_scr.loc[idx_scr, "window_start_time_[s]"]
+            if max_scr>THRESHOLDS["SCR"]:
+                violations += 1
+        else:
+            max_scr=np.nan
+
+    if df_scl is not None and not df_scl.empty:
+        scl_series = pd.to_numeric(df_scl["mean_SCL"], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+        if not scl_series.empty:
+            max_scl=scl_series.max()
+            idx_scl=scl_series.idxmax()
+            win_scl=df_scl.loc[idx_scl, "window_start_time_[s]"]
+            global_mean_scl=scl_series.mean()
+            if max_scl>1.48 * global_mean_scl:
+                violations += 1
+        else:
+            max_scl=np.nan
+            global_mean_scl=np.nan
+
+    if violations >= 3:
+        print(f"critical windows for patient {pid} are the following:  HR: {win_hr}, RMSSD: {win_rmssd}, PNN50: {win_pnn50}, SCR: {win_scr}, SCL: {win_scl}")
+    return violations
+
         
         
         
